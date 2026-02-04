@@ -3,3 +3,4 @@ SpeechRecognition
 pydub
 sumy
 nltk
+torch
