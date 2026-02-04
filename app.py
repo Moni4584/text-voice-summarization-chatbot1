@@ -5,13 +5,14 @@ from sumy.parsers.plaintext import PlaintextParser
 from sumy.nlp.tokenizers import Tokenizer
 from sumy.summarizers.lsa import LsaSummarizer
 import tempfile
-
+import os
 import nltk
-nltk.download('punkt')
-nltk.download('punkt_tab')
 
-
-nltk.download('punkt')
+# Ensure punkt tokenizer exists (download only if missing)
+try:
+    nltk.data.find("tokenizers/punkt")
+except LookupError:
+    nltk.download("punkt")
 
 st.set_page_config(page_title="Text & Voice Summarization App", layout="centered")
 st.title("📄 Text & Voice Summarization Chatbot")
@@ -28,16 +29,47 @@ def summarize_text(text, sentence_count=3):
 def summarize_audio(audio_file):
     recognizer = sr.Recognizer()
 
+    # Create a temporary WAV file
     with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as temp_audio:
-        audio = AudioSegment.from_file(audio_file)
-        audio.export(temp_audio.name, format="wav")
         temp_path = temp_audio.name
 
-    with sr.AudioFile(temp_path) as source:
-        audio_data = recognizer.record(source)
-        text = recognizer.recognize_google(audio_data)
+        # Try to convert uploaded audio to wav via pydub
+        try:
+            # Determine extension from filename if available
+            filename = getattr(audio_file, "name", "")
+            ext = filename.split(".")[-1].lower() if filename and "." in filename else None
 
-    summary = summarize_text(text)
+            if ext and ext != "wav":
+                # Read using pydub with explicit format
+                audio = AudioSegment.from_file(audio_file, format=ext)
+            else:
+                # Let pydub detect format (may work for wav or file-like objects)
+                audio = AudioSegment.from_file(audio_file)
+            audio.export(temp_path, format="wav")
+        except Exception:
+            # Fallback: write raw bytes to temp file and hope it's already WAV
+            audio_file.seek(0)
+            temp_audio.write(audio_file.read())
+            temp_audio.flush()
+
+    # Transcribe with speech_recognition
+    try:
+        with sr.AudioFile(temp_path) as source:
+            audio_data = recognizer.record(source)
+            text = recognizer.recognize_google(audio_data)
+    except sr.UnknownValueError:
+        text = ""
+        raise RuntimeError("Speech was unintelligible or could not be recognized.")
+    except sr.RequestError as e:
+        raise RuntimeError(f"Could not request results from speech recognition service: {e}")
+    finally:
+        # Clean up temp file
+        try:
+            os.remove(temp_path)
+        except Exception:
+            pass
+
+    summary = summarize_text(text) if text else ""
     return text, summary
 
 
